@@ -1,7 +1,4 @@
 import logging
-import os
-import asyncio
-from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -13,16 +10,19 @@ from telegram.ext import (
 )
 
 # ----------------- ማስተካከያዎች (CONFIG) -----------------
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8301245356:AAHTqrlV3AbpINhQ1kymSB47SIe5dYKM4hA")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "7030641737"))
-PORT = int(os.getenv("PORT", 8080))
+BOT_TOKEN = "የቦትህን_TOKEN_እዚህ_አስገባ"
+ADMIN_CHAT_ID = 123456789  # ያንተ የቴሌግራም ID (ማሳወቂያ የሚደርስበት)
 # -------------------------------------------------------
+
+# አድሚኑ መልስ ሲሰጥ ተጠቃሚውን ለይቶ ለማወቅ የሚያገለግል መዝገብ
+MESSAGE_USER_MAP = {}
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """የመጀመሪያው የመግቢያ መልእክት እና ምርጫዎች"""
     user = update.effective_user
     welcome_text = (
         f"ሰላም {user.first_name}፣ እንኳን ወደ **ገመና** በደህና መጡ! 🤍\n\n"
@@ -46,6 +46,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """የቁልፍ ምርጫዎችን ማስተናገጃ"""
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -81,15 +82,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.edit_message_text(confirm_text, parse_mode="Markdown")
 
+        # ለአድሚኑ ማሳወቅ
         admin_alert = (
             f"🔔 **አዲስ ደንበኛ ተገናኝቷል!**\n\n"
             f"• ስም፦ {user.full_name}\n"
             f"• Username: @{user.username if user.username else 'የለውም'}\n"
             f"• ID: `{user.id}`\n"
-            f"• መንገድ፦ {comm_type}\n"
+            f"• አይነት፦ {comm_type}\n"
             f"• ቆይታ፦ {duration}"
         )
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_alert, parse_mode="Markdown")
+        sent_alert = await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_alert, parse_mode="Markdown")
+        MESSAGE_USER_MAP[sent_alert.message_id] = user.id
 
     elif data == "about_service":
         about_text = (
@@ -105,63 +108,89 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "back_start":
         await start(update, context)
 
-async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ሁሉንም መልእክቶች የሚያስተናግድ (ከተጠቃሚ ወደ አድሚን፣ ከአድሚን ወደ ተጠቃሚ)"""
     user = update.effective_user
     msg = update.message
-    caption_prefix = f"📩 መልእክት ከ: {user.first_name} (`{user.id}`)\n\n"
 
-    if msg.text:
-        await context.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=f"{caption_prefix}{msg.text}",
-            parse_mode="Markdown",
-        )
-    elif msg.voice:
-        await context.bot.send_voice(
-            chat_id=ADMIN_CHAT_ID,
-            voice=msg.voice.file_id,
-            caption=caption_prefix,
-            parse_mode="Markdown",
-        )
-    else:
-        await context.bot.forward_message(
-            chat_id=ADMIN_CHAT_ID,
-            from_chat_id=msg.chat_id,
-            message_id=msg.message_id,
-        )
+    # 1. አድሚኑ ለተጠቃሚው መልእክት Reply ሲያደርግ
+    if user.id == ADMIN_CHAT_ID and msg.reply_to_message:
+        target_user_id = MESSAGE_USER_MAP.get(msg.reply_to_message.message_id)
 
-# Render የሚፈልገው Dummy Web Server
-async def handle_ping(request):
-    return web.Response(text="ገመና ቦት በሰላም እየሰራ ነው!")
+        # በመዝገቡ ካልተገኘ በመልእክቱ ጽሑፍ ውስጥ ID ካለ መፈተሽ
+        if not target_user_id and msg.reply_to_message.text:
+            for line in msg.reply_to_message.text.split("\n"):
+                if "ID:" in line:
+                    try:
+                        extracted_id = int(line.split("`")[1].strip())
+                        target_user_id = extracted_id
+                    except (IndexError, ValueError):
+                        pass
 
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", handle_ping)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logging.info(f"Dummy Web Server በፖርት {PORT} ተጀምሯል")
+        if target_user_id:
+            try:
+                if msg.text:
+                    await context.bot.send_message(chat_id=target_user_id, text=msg.text)
+                elif msg.voice:
+                    await context.bot.send_voice(chat_id=target_user_id, voice=msg.voice.file_id)
+                elif msg.audio:
+                    await context.bot.send_audio(chat_id=target_user_id, audio=msg.audio.file_id)
+                elif msg.photo:
+                    await context.bot.send_photo(chat_id=target_user_id, photo=msg.photo[-1].file_id, caption=msg.caption)
+                else:
+                    await context.bot.copy_message(chat_id=target_user_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
+                
+                await msg.reply_text("✅ መልእክትዎ ለተጠቃሚው ደርሷል!", quote=True)
+            except Exception as e:
+                await msg.reply_text(f"❌ መልእክቱን መላክ አልተቻለም፦ {e}", quote=True)
+        else:
+            await msg.reply_text("⚠️ ይቅርታ፣ ይህ መልእክት የትኛውን ተጠቃሚ እንደሚወክል ማወቅ አልተቻለም። እባክዎ ለተጠቃሚው ቀጥተኛ መልእክት Reply ያድርጉ።", quote=True)
+        return
 
-async def main():
-    # 1. የ Render ፖርት ማስኬጃ
-    await start_web_server()
+    # 2. ተጠቃሚ ወደ ቦቱ መልእክት ሲልክ (ወደ አድሚን ይተላለፋል)
+    if user.id != ADMIN_CHAT_ID:
+        caption_prefix = f"📩 መልእክት ከ፦ {user.first_name} (ID: `{user.id}`)\n\n"
+        sent_msg = None
 
-    # 2. የቴሌግራም ቦት ማስኬጃ
-    bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
-    bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(CallbackQueryHandler(button_handler))
-    bot_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_to_admin))
+        if msg.text:
+            sent_msg = await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"{caption_prefix}{msg.text}",
+                parse_mode="Markdown",
+            )
+        elif msg.voice:
+            sent_msg = await context.bot.send_voice(
+                chat_id=ADMIN_CHAT_ID,
+                voice=msg.voice.file_id,
+                caption=caption_prefix,
+                parse_mode="Markdown",
+            )
+        elif msg.photo:
+            sent_msg = await context.bot.send_photo(
+                chat_id=ADMIN_CHAT_ID,
+                photo=msg.photo[-1].file_id,
+                caption=f"{caption_prefix}{msg.caption if msg.caption else ''}",
+                parse_mode="Markdown",
+            )
+        else:
+            sent_msg = await context.bot.forward_message(
+                chat_id=ADMIN_CHAT_ID,
+                from_chat_id=msg.chat_id,
+                message_id=msg.message_id,
+            )
 
-    await bot_app.initialize()
-    await bot_app.start()
-    await bot_app.updater.start_polling()
+        if sent_msg:
+            MESSAGE_USER_MAP[sent_msg.message_id] = user.id
+
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_messages))
 
     print("ገመና ቦት ስራ ጀምሯል...")
-
-    # ላልተወሰነ ጊዜ እንዲሮጥ ማድረግ
-    while True:
-        await asyncio.sleep(3600)
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
