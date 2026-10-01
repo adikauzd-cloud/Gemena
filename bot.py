@@ -1,3 +1,6 @@
+import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -18,15 +21,31 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
+# Render ለሚፈልገው ፖርት Dummy HTTP Server ማዘጋጀት
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Gemena Bot is running fine!")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+def run_http_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logging.info(f"Dummy Web Server running on port {port} for Render")
+    server.serve_forever()
+
 def get_admin_reply_markup(user_id: int):
-    """ለአድሚን መልስ ለመስጠት የሚሆን ቁልፍ"""
     keyboard = [
         [InlineKeyboardButton("💬 መልስ (Reply)", callback_data=f"reply_to_{user_id}")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """የመጀመሪያው የመግቢያ መልእክት እና ምርጫዎች"""
     user = update.effective_user
     welcome_text = (
         f"ሰላም {user.first_name}፣ እንኳን ወደ **ገመና** በደህና መጡ! 🤍\n\n"
@@ -50,12 +69,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """የቁልፍ ምርጫዎችን ማስተናገጃ"""
     query = update.callback_query
     await query.answer()
     data = query.data
 
-    # አድሚኑ "መልስ (Reply)" የሚለውን ሲጫን
     if data.startswith("reply_to_"):
         target_id = int(data.split("_")[2])
         context.user_data["replying_to_user_id"] = target_id
@@ -97,7 +114,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.edit_message_text(confirm_text, parse_mode="Markdown")
 
-        # ለአድሚኑ ማሳወቅ
         admin_alert = (
             f"🔔 **አዲስ ደንበኛ ተገናኝቷል!**\n\n"
             f"• ስም፦ {user.full_name}\n"
@@ -128,17 +144,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """የመመለሻ ክፍለ-ጊዜን ለመሰረዝ"""
     if update.effective_user.id == ADMIN_CHAT_ID:
         context.user_data.pop("replying_to_user_id", None)
         await update.message.reply_text("✅ የመልስ ሁነታ ተሰርዟል።")
 
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """መልእክቶችን ከተጠቃሚ ወደ አድሚን፣ ከአድሚን ወደ ተጠቃሚ ማስተላለፍ"""
     user = update.effective_user
     msg = update.message
 
-    # 1. ከአድሚን ወደ ተጠቃሚ የሚላክ መልስ
     if user.id == ADMIN_CHAT_ID:
         target_id = context.user_data.get("replying_to_user_id")
 
@@ -165,10 +178,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await msg.reply_text(f"❌ መልእክቱን መላክ አልተቻለም፦ {e}", quote=True)
         else:
-            await msg.reply_text("⚠️️ እባክዎ መልስ ለመስጠት የተጠቃሚው መልእክት ስር ያለውን «💬 መልስ (Reply)» የሚለውን ቁልፍ ይጫኑ።", quote=True)
+            await msg.reply_text("⚠ እባክዎ መልስ ለመስጠት የተጠቃሚው መልእክት ስር ያለውን «💬 መልስ (Reply)» የሚለውን ቁልፍ ይጫኑ።", quote=True)
         return
 
-    # 2. ከተጠቃሚ ወደ አድሚን የሚላክ መልእክት
     caption_prefix = f"📩 መልእክት ከ: {user.first_name} (`{user.id}`)\n\n"
     reply_markup = get_admin_reply_markup(user.id)
 
@@ -204,6 +216,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 def main():
+    # Render የሚያስፈልገውን HTTP ሰርቨር በBackground ማስጀመር
+    threading.Thread(target=run_http_server, daemon=True).start()
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
