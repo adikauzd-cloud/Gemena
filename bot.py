@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 
 # ----------------- ማስተካከያዎች (CONFIG) -----------------
-BOT_TOKEN = "8301245356:AAHTqrlV3AbpINhQ1kymSB47SIe5dYKM4hA"
+BOT_TOKEN = "8301245356:AAFrrgMP-RG_JHGyp49-_WCk_PyIdJAT17s"
 ADMIN_CHAT_ID = 7030641737
 # -------------------------------------------------------
 
@@ -165,7 +165,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await msg.reply_text(f"❌ መልእክቱን መላክ አልተቻለም፦ {e}", quote=True)
         else:
-            await msg.reply_text("⚠️ እባክዎ መልስ ለመስጠት የተጠቃሚው መልእክት ስር ያለውን «💬 መልስ (Reply)» የሚለውን ቁልፍ ይጫኑ።", quote=True)
+            await msg.reply_text("⚠️️ እባክዎ መልስ ለመስጠት የተጠቃሚው መልእክት ስር ያለውን «💬 መልስ (Reply)» የሚለውን ቁልፍ ይጫኑ።", quote=True)
         return
 
     # 2. ከተጠቃሚ ወደ አድሚን የሚላክ መልእክት
