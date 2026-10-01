@@ -10,16 +10,20 @@ from telegram.ext import (
 )
 
 # ----------------- ማስተካከያዎች (CONFIG) -----------------
-BOT_TOKEN = "የቦትህን_TOKEN_እዚህ_አስገባ"
-ADMIN_CHAT_ID = 123456789  # ያንተ የቴሌግራም ID (ማሳወቂያ የሚደርስበት)
+BOT_TOKEN = "8301245356:AAHTqrlV3AbpINhQ1kymSB47SIe5dYKM4hA"
+ADMIN_CHAT_ID = 7030641737
 # -------------------------------------------------------
-
-# አድሚኑ መልስ ሲሰጥ ተጠቃሚውን ለይቶ ለማወቅ የሚያገለግል መዝገብ
-MESSAGE_USER_MAP = {}
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
+
+def get_admin_reply_markup(user_id: int):
+    """ለአድሚን መልስ ለመስጠት የሚሆን ቁልፍ"""
+    keyboard = [
+        [InlineKeyboardButton("💬 መልስ (Reply)", callback_data=f"reply_to_{user_id}")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """የመጀመሪያው የመግቢያ መልእክት እና ምርጫዎች"""
@@ -50,6 +54,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    # አድሚኑ "መልስ (Reply)" የሚለውን ሲጫን
+    if data.startswith("reply_to_"):
+        target_id = int(data.split("_")[2])
+        context.user_data["replying_to_user_id"] = target_id
+        await query.message.reply_text(
+            f"✍️ **ለተጠቃሚው (ID: `{target_id}`) የሚላከውን መልእክት አሁን ይጻፉ/ይላኩ፦**\n"
+            "*(ለመሰረዝ /cancel ይበሉ)*",
+            parse_mode="Markdown"
+        )
+        return
 
     if data in ["type_text", "type_voice"]:
         comm_type = "በጽሑፍ (Text)" if data == "type_text" else "በድምፅ (Voice Call)"
@@ -88,11 +103,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• ስም፦ {user.full_name}\n"
             f"• Username: @{user.username if user.username else 'የለውም'}\n"
             f"• ID: `{user.id}`\n"
-            f"• አይነት፦ {comm_type}\n"
+            f"• መንገድ፦ {comm_type}\n"
             f"• ቆይታ፦ {duration}"
         )
-        sent_alert = await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_alert, parse_mode="Markdown")
-        MESSAGE_USER_MAP[sent_alert.message_id] = user.id
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=admin_alert,
+            reply_markup=get_admin_reply_markup(user.id),
+            parse_mode="Markdown"
+        )
 
     elif data == "about_service":
         about_text = (
@@ -108,84 +127,87 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "back_start":
         await start(update, context)
 
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """የመመለሻ ክፍለ-ጊዜን ለመሰረዝ"""
+    if update.effective_user.id == ADMIN_CHAT_ID:
+        context.user_data.pop("replying_to_user_id", None)
+        await update.message.reply_text("✅ የመልስ ሁነታ ተሰርዟል።")
+
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ሁሉንም መልእክቶች የሚያስተናግድ (ከተጠቃሚ ወደ አድሚን፣ ከአድሚን ወደ ተጠቃሚ)"""
+    """መልእክቶችን ከተጠቃሚ ወደ አድሚን፣ ከአድሚን ወደ ተጠቃሚ ማስተላለፍ"""
     user = update.effective_user
     msg = update.message
 
-    # 1. አድሚኑ ለተጠቃሚው መልእክት Reply ሲያደርግ
-    if user.id == ADMIN_CHAT_ID and msg.reply_to_message:
-        target_user_id = MESSAGE_USER_MAP.get(msg.reply_to_message.message_id)
+    # 1. ከአድሚን ወደ ተጠቃሚ የሚላክ መልስ
+    if user.id == ADMIN_CHAT_ID:
+        target_id = context.user_data.get("replying_to_user_id")
 
-        # በመዝገቡ ካልተገኘ በመልእክቱ ጽሑፍ ውስጥ ID ካለ መፈተሽ
-        if not target_user_id and msg.reply_to_message.text:
-            for line in msg.reply_to_message.text.split("\n"):
-                if "ID:" in line:
-                    try:
-                        extracted_id = int(line.split("`")[1].strip())
-                        target_user_id = extracted_id
-                    except (IndexError, ValueError):
-                        pass
+        if not target_id and msg.reply_to_message and msg.reply_to_message.reply_markup:
+            for row in msg.reply_to_message.reply_markup.inline_keyboard:
+                for btn in row:
+                    if btn.callback_data and btn.callback_data.startswith("reply_to_"):
+                        target_id = int(btn.callback_data.split("_")[2])
 
-        if target_user_id:
+        if target_id:
             try:
                 if msg.text:
-                    await context.bot.send_message(chat_id=target_user_id, text=msg.text)
+                    await context.bot.send_message(chat_id=target_id, text=msg.text)
                 elif msg.voice:
-                    await context.bot.send_voice(chat_id=target_user_id, voice=msg.voice.file_id)
+                    await context.bot.send_voice(chat_id=target_id, voice=msg.voice.file_id)
                 elif msg.audio:
-                    await context.bot.send_audio(chat_id=target_user_id, audio=msg.audio.file_id)
+                    await context.bot.send_audio(chat_id=target_id, audio=msg.audio.file_id)
                 elif msg.photo:
-                    await context.bot.send_photo(chat_id=target_user_id, photo=msg.photo[-1].file_id, caption=msg.caption)
+                    await context.bot.send_photo(chat_id=target_id, photo=msg.photo[-1].file_id, caption=msg.caption)
                 else:
-                    await context.bot.copy_message(chat_id=target_user_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
-                
-                await msg.reply_text("✅ መልእክትዎ ለተጠቃሚው ደርሷል!", quote=True)
+                    await context.bot.copy_message(chat_id=target_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
+
+                await msg.reply_text("✅ መልእክትዎ ለተጠቃሚው ተልኳል!", quote=True)
             except Exception as e:
                 await msg.reply_text(f"❌ መልእክቱን መላክ አልተቻለም፦ {e}", quote=True)
         else:
-            await msg.reply_text("⚠️ ይቅርታ፣ ይህ መልእክት የትኛውን ተጠቃሚ እንደሚወክል ማወቅ አልተቻለም። እባክዎ ለተጠቃሚው ቀጥተኛ መልእክት Reply ያድርጉ።", quote=True)
+            await msg.reply_text("⚠️ እባክዎ መልስ ለመስጠት የተጠቃሚው መልእክት ስር ያለውን «💬 መልስ (Reply)» የሚለውን ቁልፍ ይጫኑ።", quote=True)
         return
 
-    # 2. ተጠቃሚ ወደ ቦቱ መልእክት ሲልክ (ወደ አድሚን ይተላለፋል)
-    if user.id != ADMIN_CHAT_ID:
-        caption_prefix = f"📩 መልእክት ከ፦ {user.first_name} (ID: `{user.id}`)\n\n"
-        sent_msg = None
+    # 2. ከተጠቃሚ ወደ አድሚን የሚላክ መልእክት
+    caption_prefix = f"📩 መልእክት ከ: {user.first_name} (`{user.id}`)\n\n"
+    reply_markup = get_admin_reply_markup(user.id)
 
-        if msg.text:
-            sent_msg = await context.bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=f"{caption_prefix}{msg.text}",
-                parse_mode="Markdown",
-            )
-        elif msg.voice:
-            sent_msg = await context.bot.send_voice(
-                chat_id=ADMIN_CHAT_ID,
-                voice=msg.voice.file_id,
-                caption=caption_prefix,
-                parse_mode="Markdown",
-            )
-        elif msg.photo:
-            sent_msg = await context.bot.send_photo(
-                chat_id=ADMIN_CHAT_ID,
-                photo=msg.photo[-1].file_id,
-                caption=f"{caption_prefix}{msg.caption if msg.caption else ''}",
-                parse_mode="Markdown",
-            )
-        else:
-            sent_msg = await context.bot.forward_message(
-                chat_id=ADMIN_CHAT_ID,
-                from_chat_id=msg.chat_id,
-                message_id=msg.message_id,
-            )
-
-        if sent_msg:
-            MESSAGE_USER_MAP[sent_msg.message_id] = user.id
+    if msg.text:
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=f"{caption_prefix}{msg.text}",
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+    elif msg.voice:
+        await context.bot.send_voice(
+            chat_id=ADMIN_CHAT_ID,
+            voice=msg.voice.file_id,
+            caption=caption_prefix,
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+    elif msg.photo:
+        await context.bot.send_photo(
+            chat_id=ADMIN_CHAT_ID,
+            photo=msg.photo[-1].file_id,
+            caption=f"{caption_prefix}{msg.caption if msg.caption else ''}",
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+    else:
+        await context.bot.copy_message(
+            chat_id=ADMIN_CHAT_ID,
+            from_chat_id=msg.chat_id,
+            message_id=msg.message_id,
+            reply_markup=reply_markup,
+        )
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_messages))
 
