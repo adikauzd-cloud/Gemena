@@ -1,5 +1,7 @@
 import logging
 import os
+import asyncio
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -13,6 +15,7 @@ from telegram.ext import (
 # ----------------- ማስተካከያዎች (CONFIG) -----------------
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8301245356:AAHTqrlV3AbpINhQ1kymSB47SIe5dYKM4hA")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "7030641737"))
+PORT = int(os.getenv("PORT", 8080))
 # -------------------------------------------------------
 
 logging.basicConfig(
@@ -20,7 +23,6 @@ logging.basicConfig(
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """የመጀመሪያው የመግቢያ መልእክት እና ምርጫዎች"""
     user = update.effective_user
     welcome_text = (
         f"ሰላም {user.first_name}፣ እንኳን ወደ **ገመና** በደህና መጡ! 🤍\n\n"
@@ -44,7 +46,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """የቁልፍ ምርጫዎችን ማስተናገጃ"""
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -80,7 +81,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.edit_message_text(confirm_text, parse_mode="Markdown")
 
-        # ለአድሚኑ ማሳወቅ
         admin_alert = (
             f"🔔 **አዲስ ደንበኛ ተገናኝቷል!**\n\n"
             f"• ስም፦ {user.full_name}\n"
@@ -106,10 +106,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
 
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ተጠቃሚው ቦቱ ላይ የሚልከውን ጽሑፍ/ድምፅ በቀጥታ ላንተ ያስተላልፋል"""
     user = update.effective_user
     msg = update.message
-
     caption_prefix = f"📩 መልእክት ከ: {user.first_name} (`{user.id}`)\n\n"
 
     if msg.text:
@@ -132,15 +130,38 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=msg.message_id,
         )
 
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+# Render የሚፈልገው Dummy Web Server
+async def handle_ping(request):
+    return web.Response(text="ገመና ቦት በሰላም እየሰራ ነው!")
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_to_admin))
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logging.info(f"Dummy Web Server በፖርት {PORT} ተጀምሯል")
+
+async def main():
+    # 1. የ Render ፖርት ማስኬጃ
+    await start_web_server()
+
+    # 2. የቴሌግራም ቦት ማስኬጃ
+    bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(CallbackQueryHandler(button_handler))
+    bot_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_to_admin))
+
+    await bot_app.initialize()
+    await bot_app.start()
+    await bot_app.updater.start_polling()
 
     print("ገመና ቦት ስራ ጀምሯል...")
-    app.run_polling()
+
+    # ላልተወሰነ ጊዜ እንዲሮጥ ማድረግ
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
